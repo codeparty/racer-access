@@ -38,7 +38,7 @@ function plugin (racer, options) {
    * A convenience method for declaring access control on writes, based on the
    * value of the document before the operation is applied to it.
    * @param {String} collectionName
-   * @param {Function} callback(docId, opData, doc, connectSession, isServer, next)
+   * @param {Function} callback(docId, opData, doc, connectSession, next)
    *   where next(docId, opData, docBeforeOp, session, next)
    */
   Store.prototype.preChange = createWriteHelper('pre validate', 'oldSnapshot');
@@ -50,7 +50,7 @@ function plugin (racer, options) {
    * want to experiment to see if this particular interface is sufficient, before
    * committing this convenience method to core.
    * @param {String} collectionName
-   * @param {Function} callback(docId, opData, doc, connectSession, isServer, callback)
+   * @param {Function} callback(docId, opData, doc, connectSession, callback)
    */
   Store.prototype.onChange = createWriteHelper('validate', 'snapshot');
 
@@ -96,7 +96,7 @@ exports.rememberUser = function (req, res, next) {
 function createWriteHelper (shareEvent, snapshotKey) {
   /*
    * @param {String} collectionName
-   * @param {Function} callback(docId, opData, doc, connectSession, isServer, callback)
+   * @param {Function} callback(docId, opData, doc, connectSession, callback)
    */
   return function (collectionName, callback) {
     // `this` is store
