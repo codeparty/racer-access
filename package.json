@@ -1,0 +1,30 @@
+{
+  "name": "racer-access",
+  "version": "0.0.0",
+  "description": "Access control plugin for racer",
+  "main": "index.js",
+  "dependencies": {
+    "racer-util": "*"
+  },
+  "scripts": {
+    "test": "mocha --compilers .coffee:coffee-script test.coffee"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/codeparty/racer-access.git"
+  },
+  "keywords": [
+    "racer",
+    "derby",
+    "derbyjs",
+    "accesscontrol",
+    "access"
+  ],
+  "author": "Brian N Noguchi",
+  "license": "MIT",
+  "readmeFilename": "README.md",
+  "gitHead": "b249d0e7707574bdd05143ef3c9b538b4e577ce7",
+  "bugs": {
+    "url": "https://github.com/codeparty/racer-access/issues"
+  }
+}
