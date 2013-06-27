@@ -6,6 +6,17 @@
   "dependencies": {
     "racer-util": "*"
   },
+  "devDependencies": {
+    "racer": "0.5.x",
+    "livedb": "git://github.com/share/livedb.git",
+    "redis": "*",
+    "mongoskin": "*",
+    "livedb-mongo": "*",
+    "async": "*",
+    "mocha": "*",
+    "coffee-script": "*",
+    "expect.js": "*"
+  },
   "scripts": {
     "test": "mocha --compilers .coffee:coffee-script test.coffee"
   },
