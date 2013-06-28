@@ -14,7 +14,7 @@ function plugin (racer, options) {
       var opData = shareRequest.opData;
       opData.collection = shareRequest.collection;
       opData.docName = shareRequest.docName;
-      opData.connectSession = useragent.connectSession;
+      opData.connectSession = shareRequest.agent.connectSession;
       opData.origin = (shareRequest.agent.stream.isServer) ?
         'server' :
         'browser';
@@ -73,6 +73,12 @@ function plugin (racer, options) {
     this['_allow_' + type](pattern, callback);
   };
 
+  /**
+   * A convenience method for declaring access control on queries. This may be
+   * moved into racer core. We'll want to experiment to see if this particular
+   * interface is sufficient, before committing this convenience method to
+   * core.
+   */
   Store.prototype._allow_query = function (collectionName, callback) {
     this.shareClient.use('query', function (shareRequest, next) {
       if (collectionName !== shareRequest.collection) return next();
@@ -138,6 +144,13 @@ function plugin (racer, options) {
     }
   };
 
+  /**
+   * A convenience method for declaring access control on creates, based on the
+   * value of the document before the operation is applied to it.
+   * @param {String} collectionName
+   * @param {Function} callback(docId, opData, doc, connectSession, next)
+   *   where next(docId, opData, docBeforeOp, session, next)
+   */
   Store.prototype._allow_create = function (pattern, validate) {
     this.shareClient._validatorsCreate.push(
       function (collection, docName, opData, snapshotData, connectSession) {
@@ -148,6 +161,14 @@ function plugin (racer, options) {
     );
   };
 
+  /**
+   * A convenience method for declaring access control on document and
+   * attribute deletes, based on the value of the document before the operation
+   * is applied to it.
+   * @param {String} collectionName
+   * @param {Function} callback(docId, opData, doc, connectSession, next)
+   *   where next(docId, opData, docBeforeOp, session, next)
+   */
   Store.prototype._allow_del = function (pattern, validate) {
     // If the pattern is just the collection name, then access control is being
     // set up for document deletion.
@@ -287,51 +308,6 @@ function plugin (racer, options) {
       }
     );
   };
-
-  /**
-   * A convenience method for declaring access control on queries. For usage, see
-   * the example code below (`store.onQuery('items', ...`)). This may be moved
-   * into racer core. We'll want to experiment to see if this particular
-   * interface is sufficient, before committing this convenience method to core.
-   */
-  Store.prototype.onQuery = function (collectionName, callback) {
-    this.shareClient.use('query', function (shareRequest, next) {
-      if (collectionName !== shareRequest.collection) return next();
-      var session = shareRequest.agent.connectSession;
-      shareRequest.query = deepCopy(shareRequest.query);
-      callback(shareRequest.query, session, next);
-    });
-  };
-
-  /**
-   * A convenience method for declaring access control on writes, based on the
-   * value of the document before the operation is applied to it.
-   * @param {String} collectionName
-   * @param {Function} callback(docId, opData, doc, connectSession, next)
-   *   where next(docId, opData, docBeforeOp, session, next)
-   */
-  Store.prototype.preChange = createWriteHelper('pre validate', 'oldSnapshot');
-
-  /**
-   * A convenience method for declaring access control on writes, based on the
-   * hypothetical result of the operation. For usage, see the example code below
-   * (`store.onChange('users', ...`)). This may be moved into racer core. We'll
-   * want to experiment to see if this particular interface is sufficient, before
-   * committing this convenience method to core.
-   * @param {String} collectionName
-   * @param {Function} callback(docId, opData, doc, connectSession, callback)
-   */
-  Store.prototype.onChange = createWriteHelper('validate', 'snapshot');
-
-
-  Store.prototype.filterDoc = function (collection, callback) {
-    this.shareClient.filter( function (collectionName, docId, snapshot, next) {
-      if (collectionName !== collection) return next();
-      var useragent = this;
-      var doc = snapshot.data;
-      return callback(docId, doc, useragent.connectSession, next);
-    });
-  };
 }
 
 /**
@@ -348,46 +324,6 @@ exports.rememberUser = function (req, res, next) {
     next();
   });
 };
-
-/**
- * @param {String} shareEvent
- * @param {String} snapshotKey
- * @return {Function}
- */
-function createWriteHelper (shareEvent, snapshotKey) {
-  /*
-   * @param {String} collectionName
-   * @param {Function} callback(docId, opData, doc, connectSession, callback)
-   */
-  return function (collectionName, callback) {
-    // `this` is store
-    this.shareClient.use(shareEvent, function (shareRequest, next) {
-      var collection = shareRequest.collection;
-      if (collection !== collectionName) return next();
-      var agent = shareRequest.agent;
-      var action = shareRequest.action
-      var docName = shareRequest.docName;
-      var backend = shareRequest.backend;
-      // opData represents the ShareJS operation
-      var opData = shareRequest.opData;
-      // snapshot is the snapshot of the data before or after the opData has
-      // been applied (depends on snapshotKey, which correlates with shareEvent)
-      var snapshot = shareRequest[snapshotKey];
-
-      var snapshotData = (opData.del) ?
-        opData.prev.data :
-        snapshot.data;
-
-      opData.origin = (shareRequest.agent.stream.isServer) ?
-          'server' :
-          'browser';
-      callback(docName, opData, snapshotData, agent.connectSession, function (err) {
-        delete opData.origin;
-        next(err);
-      });
-    });
-  };
-}
 
 function collectionMatchesPattern (collection, pattern) {
   if (pattern === '**') return true;
