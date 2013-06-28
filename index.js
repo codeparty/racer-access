@@ -113,7 +113,7 @@ function plugin (racer, options) {
         var isRelevantPath = relevantPath(pattern, relativeSegments);
         if (! isRelevantPath) return;
 
-        var changeTo = calcChangeTo(racerMethod, opData);
+        var changeTo = calcChangeTo(racerMethod, opData, relativeSegments, snapshotData);
         if (isRelevantPath.length > 1) {
           var matches = isRelevantPath;
           return validate.apply(null, [docName].concat(matches.slice(1)).concat(changeTo, snapshotData, connectSession));
@@ -189,7 +189,7 @@ function plugin (racer, options) {
         var isRelevantPath = relevantPath(pattern, relativeSegments);
         if (! isRelevantPath) return;
 
-        var changeTo = calcChangeTo(racerMethod, opData);
+        var changeTo = calcChangeTo(racerMethod, opData, relativeSegments, snapshotData);
         var index = relativeSegments[relativeSegments.length-1];
         var howMany = 1;
         return validate(docName, index, howMany, snapshotData, connectSession);
@@ -212,6 +212,68 @@ function plugin (racer, options) {
         var index = relativeSegments[relativeSegments.length-1];
         var toInsert = [opData.op[0].li];
         return validate(docName, index, toInsert, snapshotData, connectSession);
+      }
+    );
+  };
+
+  Store.prototype._allow_move = function (pattern, validate) {
+    this.shareClient._validatorsUpdate.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        var racerMethod = opToRacerMethod(opData.op);
+        if (racerMethod !== 'move') return;
+
+        var relativeSegments = segmentsFor(racerMethod, opData);
+        var isRelevantPath = relevantPath(pattern, relativeSegments);
+        if (! isRelevantPath) return;
+
+        var from = relativeSegments[relativeSegments.length-1];
+        var to = opData.op[0].lm;
+        var howMany = 1;
+        return validate(docName, from, to, howMany, snapshotData, connectSession);
+      }
+    );
+  };
+
+  Store.prototype._allow_all = function (pattern, validate) {
+    this.shareClient._validatorsUpdate.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        if (pattern === '**') {
+          var racerMethod = opToRacerMethod(opData.op);
+          var relativeSegments = segmentsFor(racerMethod, opData);
+          return validate(docName, relativeSegments.join('.'), opData, snapshotData, connectSession);
+        } else if (pattern === collection + '**') {
+          var racerMethod = opToRacerMethod(opData.op);
+          var relativeSegments = segmentsFor(racerMethod, opData);
+          return validate(docName, relativeSegments.join('.'), opData, snapshotData, connectSession);
+        } else {
+          var racerMethod = opToRacerMethod(opData.op);
+          var relativeSegments = segmentsFor(racerMethod, opData);
+          var isRelevantPath = relevantPath(pattern, relativeSegments);
+          if (! isRelevantPath) return;
+          return validate(docName, relativeSegments.join('.'), opData, snapshotData, connectSession);
+        }
+      }
+    );
+
+    this.shareClient._validatorsCreate.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        if ((pattern === '**') || (pattern === collection + '**')) {
+          var relPath = '';
+          return validate(docName, relPath, opData, snapshotData, connectSession);
+        }
+      }
+    );
+
+    this.shareClient._validatorsDel.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        if (pattern === collection + '**') {
+          var relPath = '';
+          return validate(docName, relPath, opData, snapshotData, connectSession);
+        }
       }
     );
   };
@@ -318,6 +380,7 @@ function createWriteHelper (shareEvent, snapshotKey) {
 }
 
 function collectionMatchesPattern (collection, pattern) {
+  if (pattern === '**') return true;
   return collection === pattern.slice(0, collection.length);
 }
 
@@ -346,7 +409,7 @@ function opToRacerMethod (op) {
 
   // String insert
   } else if (item.si) {
-    return 'insert';
+    return 'stringInsert';
 
   // String remove
   } else if (item.sd) {
@@ -385,6 +448,7 @@ function segmentsFor (racerEvent, opData) {
 }
 
 function relevantPath (pattern, relativeSegments) {
+  if (pattern === '**') return [null].concat(relativeSegments);
   // Check for patterns "collection**" or e.g., "collection.*.x.y.z**"
   if (pattern.slice(pattern.length-2, pattern.length) === '**') {
   } else {
@@ -409,7 +473,7 @@ function relevantPath (pattern, relativeSegments) {
   }
 }
 
-function calcChangeTo (racerMethod, opData) {
+function calcChangeTo (racerMethod, opData, relativeSegments, snapshotData) {
   var item = opData.op[0];
   if (racerMethod === 'change') {
     return item.oi || // object replace, insert, or delete
