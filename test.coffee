@@ -1,4 +1,7 @@
 # TODO
+# - Test parameters
+# - Test existence of session as a parameter
+# - Test subtree patterns (i.e., xyz.*.a.b.c**)
 # - Should access control "change" ruls on subpaths impact a model.add ?
 async = require 'async'
 expect = require 'expect.js'
@@ -179,8 +182,6 @@ shouldAllowAndBlockForAll = ->
         @model.move "widgets.#{widgetId}.list", 0, 1, 1, (err) =>
           expect(err).to.equal 'Unauthorized'
           done()
-
-# TODO Test more event patterns
 
 describe 'access control on the server', ->
   beforeEach (done) ->
