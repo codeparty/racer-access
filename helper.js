@@ -6,9 +6,8 @@ module.exports = {
 , patternToRegExp: patternToRegExp
 };
 
+
 function opToRacerSemantics (op) {
-  // TODO Loop through all ops
-  console.log(op);
   var item = op[0];
 
   // segments relative to doc root
@@ -65,7 +64,9 @@ function opToRacerSemantics (op) {
 
   // Increment
   } else if (item.na !== void 0) {
-    return ['increment', relativeSegments, [item.na]];
+    var args = [item.na];
+    args.type = 'increment';
+    return ['increment', relativeSegments, args];
   }
 }
 

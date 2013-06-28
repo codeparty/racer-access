@@ -1,23 +1,57 @@
 var deepCopy = require('racer-util/object').deepCopy;
-var helpers = require('./helper');
-var opToRacerSemantics = helpers.opToRacerSemantics;
-var stringInsertToRacerChange = helpers.stringInsertToRacerChange;
-var stringRemoveToRacerChange = helpers.stringRemoveToRacerChange;
-var lookupSegments = helpers.lookupSegments;
-var patternToRegExp = helpers.patternToRegExp
-
-// These are events that cause a "change" event to fire
-var CHANGE_EVENTS = {
-  change: 1
-, stringInsert: 1
-, stringRemove: 1
-, increment: 1
-};
 
 exports = module.exports = plugin;
 
 function plugin (racer, options) {
   var Store = racer.Store;
+
+  function setupPreValidate (shareClient) {
+    shareClient._validatorsCreate = [];
+    shareClient._validatorsDel = [];
+    shareClient._validatorsUpdate = [];
+    shareClient.use('submit', function (shareRequest, next) {
+      var useragent = this;
+      var opData = shareRequest.opData;
+      opData.collection = shareRequest.collection;
+      opData.docName = shareRequest.docName;
+      opData.connectSession = useragent.connectSession;
+      opData.origin = (shareRequest.agent.stream.isServer) ?
+        'server' :
+        'browser';
+      next();
+    });
+
+    /**
+     * @param {Object} opData
+     * @param {Array} opData.op
+     * @param {Number} opData.v
+     * @param {String} opData.src
+     * @param {Number} opData.seq
+     * @param {Object} data is the current snapshot
+     * @return {Error|undefined}
+     */
+    shareClient.preValidate = function (opData, data) {
+      var collection = opData.collection;
+      var docName = opData.docName;
+      var connectSession = opData.connectSession;
+      var origin = opData.origin;
+
+      var validators;
+      if (opData.create) {
+        validators = shareClient._validatorsCreate;
+      } else if (opData.del) {
+        validators = shareClient._validatorsDel;
+      } else {
+        validators = shareClient._validatorsUpdate;
+      }
+      var err;
+      for (var i = 0, l = validators.length; i < l; i++) {
+        err = validators[i](collection, docName, opData, data.data, connectSession);
+        if (err) break;
+      }
+      if (err) return err;
+    }
+  }
 
   racer.on('store', function (store) {
     /**
@@ -31,6 +65,8 @@ function plugin (racer, options) {
       if (req && req.session) shareRequest.agent.connectSession = req.session;
       next();
     });
+
+    setupPreValidate(store.shareClient);
   });
 
   Store.prototype.allow = function (type, pattern, callback) {
@@ -47,6 +83,14 @@ function plugin (racer, options) {
   };
 
 
+  /**
+   * A convenience method for declaring access control on reading individual
+   * documents. This may be moved into racer core. We'll want to experiment to
+   * see if this particular interface is sufficient, before committing this
+   * convenience method to core.
+   * @param {String} collectionName
+   * @param {Function} callback(docId, doc, connectSession)
+   */
   Store.prototype._allow_doc = function (collectionName, callback) {
     this.shareClient.filter( function (collection, docId, snapshot, next) {
       if (collectionName !== collection) return next();
@@ -56,200 +100,120 @@ function plugin (racer, options) {
     });
   };
 
-  Store.prototype._allow_change = function (pattern, callback) {
-    /**
-     * @param {Object} shareRequest
-     * @param {String} shareRequest.action
-     * @param {String} shareRequest.docName
-     * @param {LiveDb} shareRequest.backend
-     * @param {Object} shareRequest.opData
-     * @param {Function} next(err)
-     */
-    this.shareClient.use('submit', function (shareRequest, next) {
-      var collection = shareRequest.collection;
-      if (collection !== pattern.slice(0, collection.length)) {
-        return next();
-      }
+  Store.prototype._allow_change = function (pattern, validate) {
+    this.shareClient._validatorsUpdate.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        var racerMethod = opToRacerMethod(opData.op);
+        if (-1 === ['change', 'stringRemove', 'stringInsert', 'increment'].indexOf(racerMethod)) {
+          return;
+        }
 
-      // opData represents the ShareJS operation
-      var opData = shareRequest.opData;
+        var relativeSegments = segmentsFor(racerMethod, opData);
+        var isRelevantPath = relevantPath(pattern, relativeSegments);
+        if (! isRelevantPath) return;
 
-      if (opData.create) {
-        var type = 'change';
-        var changeTo = opData.create.data;
-        // TODO Weird that changeTo is undefined (because of _createImplied)
-        if (! changeTo) return next();
-      } else {
-        var op = opData.op;
-        var parsed = opToRacerSemantics(op);
-        var type = parsed[0];
-
-        if (! CHANGE_EVENTS[type]) return callback();
-
-        var relativeSegments = parsed[1];
-        var args = parsed[2];
-
-        // Check for patterns "collection**" or e.g., "collection.*.x.y.z**"
-        if (pattern.slice(pattern.length-2, pattern.length) === '**') {
+        var changeTo = calcChangeTo(racerMethod, opData);
+        if (isRelevantPath.length > 1) {
+          var matches = isRelevantPath;
+          return validate.apply(null, [docName].concat(matches.slice(1)).concat(changeTo, snapshotData, connectSession));
         } else {
-          // Handle e.g., pattern = "collection.*.x.y.z"
-          var patternSegments = pattern.split('.');
-          if (patternSegments[1] !== '*') {
-            console.warn('Unexpected pattern', pattern);
-          }
-          var patternRelativeSegments = patternSegments.slice(2);
-
-          // Pass to next middleware if pattern does not match the mutated path
-          if (relativeSegments.length !== patternRelativeSegments.length) {
-            return next();
-          }
-          if (relativeSegments.join('.') !== patternRelativeSegments.join('.')) {
-            return next();
-          }
-
-        }
-
-        // snapshot is the snapshot of the data before or after the opData has
-        var snapshotData = shareRequest.oldSnapshot.data;
-        if (type === 'change') {
-          var changeTo = lookupSegments(relativeSegments, snapshotData);
-          var apply = null;
-        } else if (type === 'stringInsert') {
-          var index = args[0];
-          var text = args[1];
-          var changeParams = stringInsertToRacerChange(relativeSegments, index, text, snapshotData);
-          var value = changeParams[0];
-          var previous = changeParams[1];
-        } else if (type === 'stringRemove') {
-          var index = args[0];
-          var text = args[1];
-          var changeParams = stringRemoveToRacerChange(relativeSegments, index, text, model);
-        } else if (type === 'increment') {
+          return validate(docName, changeTo, snapshotData, connectSession);
         }
       }
+    );
 
-      var agent = shareRequest.agent;
-      opData.origin = (shareRequest.agent.stream.isServer) ?
-        'server' :
-        'browser';
+    var indexOfDot = pattern.indexOf('.');
+    if ((indexOfDot !== -1) && (indexOfDot + 2 === pattern.length) && pattern.charAt(pattern.length-1) === '*') {
+      this.shareClient._validatorsCreate.push(
+        function (collection, docName, opData, snapshotData, connectSession) {
+          if (! collectionMatchesPattern(collection, pattern)) return;
 
-      // Otherwise, this access control handler is applicable
-      var docName = shareRequest.docName;
-      var session = shareRequest.agent.connectSession;
-      callback(docName, changeTo, snapshotData, apply, session, function (err) {
-        delete opData.origin;
-        next(err);
-      });
-//      var regExp = patternToRegExp(pattern);
+          if (collection !== opData.collection) return;
 
-    });
+          var newDoc = opData.create.data;
+          return validate(docName, newDoc, connectSession);
+        }
+      );
+    }
   };
 
-  Store.prototype._allow_create = function (pattern, callback) {
-    this.shareClient.use('submit', function (shareRequest, next) {
-      var collection = shareRequest.collection;
-      if (collection !== pattern.slice(0, collection.length)) {
-        return next();
+  Store.prototype._allow_create = function (pattern, validate) {
+    this.shareClient._validatorsCreate.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        var newDoc = opData.create.data;
+        return validate(docName, newDoc, connectSession);
       }
-
-      var opData = shareRequest.opData;
-      if (! opData.create) return next();
-      var docName = shareRequest.docName;
-      var newDoc = opData.create.data;
-      var session = shareRequest.agent.connectSession;
-      callback(docName, newDoc, session, next);
-    });
+    );
   };
 
-  Store.prototype._allow_remove = function (pattern, callback) {
-    this.shareClient.use('submit', function (shareRequest, next) {
-      var collection = shareRequest.collection; if (collection !== pattern.slice(0, collection.length)) {
-        return next();
-      }
-
-      var opData = shareRequest.opData;
-      if (opData.create) return next();
-
-      var op = opData.op;
-      var parsed = opToRacerSemantics(op);
-      var type = parsed[0];
-
-      if (type !== 'remove') return next();
-
-      var relativeSegments = parsed[1];
-      var args = parsed[2];
-
-      // Check for patterns "collection**" or e.g., "collection.*.x.y.z**"
-      if (pattern.slice(pattern.length-2, pattern.length) === '**') {
-      } else {
-        // Handle e.g., pattern = "collection.*.x.y.z"
-        var patternSegments = pattern.split('.');
-        if (patternSegments[1] !== '*') {
-          console.warn('Unexpected pattern', pattern);
+  Store.prototype._allow_del = function (pattern, validate) {
+    // If the pattern is just the collection name, then access control is being
+    // set up for document deletion.
+    if (pattern.indexOf('.') === -1 && pattern.indexOf('*') === -1) {
+      this.shareClient._validatorsDel.push(
+        function (collection, docName, opData, snapshotData, connectSession) {
+          if (! collectionMatchesPattern(collection, pattern)) return;
+          var docToRemove = snapshotData;
+          return validate(docName, docToRemove, connectSession);
         }
-        var patternRelativeSegments = patternSegments.slice(2);
+      );
+    } else {
+      this.shareClient._validatorsUpdate.push(
+        function (collection, docName, opData, snapshotData, connectSession) {
+          if (! collectionMatchesPattern(collection, pattern)) return;
 
-        // Pass to next middleware if pattern does not match the mutated path
-        if (relativeSegments.length !== patternRelativeSegments.length) {
-          return next();
+          var item = opData.op[0];
+
+          // Ignore replaces (i.e., op.oi and op.od are both present);
+          if (item.oi) return;
+
+          var valueToDelete = item.od;
+          if (valueToDelete === void 0) return;
+
+          return validate(docName, valueToDelete, snapshotData, connectSession);
         }
-        if (relativeSegments.join('.') !== patternRelativeSegments.join('.')) {
-          return next();
-        }
-
-      }
-
-      var docBeforeRemove = shareRequest.oldSnapshot.data;
-      var index = args[0];
-      var howMany = args[1];
-
-      var docName = shareRequest.docName;
-      var apply = null;
-      var session = shareRequest.agent.connectSession;
-      callback(docName, index, howMany, docBeforeRemove, apply, session, next);
-
-    });
+      );
+    }
   };
 
-  Store.prototype._allow_insert = function (pattern, callback) {
-    this.shareClient.use('submit', function (shareRequest, next) {
-      var relevant = isRelevantNonChange('insert', pattern, shareRequest);
-      if (! relevant) return next();
+  Store.prototype._allow_remove = function (pattern, validate) {
+    this.shareClient._validatorsUpdate.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        var racerMethod = opToRacerMethod(opData.op);
+        if (racerMethod !== 'remove') return;
 
-      var parsed = relevant;
+        var relativeSegments = segmentsFor(racerMethod, opData);
+        var isRelevantPath = relevantPath(pattern, relativeSegments);
+        if (! isRelevantPath) return;
 
-      var relativeSegments = parsed[1];
-      var args = parsed[2];
-
-      // Check for patterns "collection**" or e.g., "collection.*.x.y.z**"
-      if (pattern.slice(pattern.length-2, pattern.length) === '**') {
-      } else {
-        // Handle e.g., pattern = "collection.*.x.y.z"
-        var patternSegments = pattern.split('.');
-        if (patternSegments[1] !== '*') {
-          console.warn('Unexpected pattern', pattern);
-        }
-        var patternRelativeSegments = patternSegments.slice(2);
-
-        // Pass to next middleware if pattern does not match the mutated path
-        if (relativeSegments.length !== patternRelativeSegments.length) {
-          return next();
-        }
-        if (relativeSegments.join('.') !== patternRelativeSegments.join('.')) {
-          return next();
-        }
-
-      var docBeforeInsert = shareRequest.oldSnapshot.data;
-      var index = args[0];
-      var toInsert = args[1];
-
-      var docName = shareRequest.docName;
-      var apply = null;
-      var session = shareRequest.agent.connectSession;
-      callback(docName, index, toInsert, docBeforeInsert, apply, session, next);
+        var changeTo = calcChangeTo(racerMethod, opData);
+        var index = relativeSegments[relativeSegments.length-1];
+        var howMany = 1;
+        return validate(docName, index, howMany, snapshotData, connectSession);
 
       }
-    });
+    );
+  };
+
+  Store.prototype._allow_insert = function (pattern, validate) {
+    this.shareClient._validatorsUpdate.push(
+      function (collection, docName, opData, snapshotData, connectSession) {
+        if (! collectionMatchesPattern(collection, pattern)) return;
+        var racerMethod = opToRacerMethod(opData.op);
+        if (racerMethod !== 'insert') return;
+
+        var relativeSegments = segmentsFor(racerMethod, opData);
+        var isRelevantPath = relevantPath(pattern, relativeSegments);
+        if (! isRelevantPath) return;
+
+        var index = relativeSegments[relativeSegments.length-1];
+        var toInsert = [opData.op[0].li];
+        return validate(docName, index, toInsert, snapshotData, connectSession);
+      }
+    );
   };
 
   /**
@@ -288,14 +252,6 @@ function plugin (racer, options) {
   Store.prototype.onChange = createWriteHelper('validate', 'snapshot');
 
 
-  /**
-   * A convenience method for declaring access control on reading individual
-   * documents. This may be moved into racer core. We'll want to experiment to
-   * see if this particular interface is sufficient, before committing this
-   * convenience method to core.
-   * @param {String} collectionName
-   * @param {Function} callback(docId, doc, connectSession)
-   */
   Store.prototype.filterDoc = function (collection, callback) {
     this.shareClient.filter( function (collectionName, docId, snapshot, next) {
       if (collectionName !== collection) return next();
@@ -303,57 +259,6 @@ function plugin (racer, options) {
       var doc = snapshot.data;
       return callback(docId, doc, useragent.connectSession, next);
     });
-  };
-
-//  Store.prototype.allow = function (type, pattern, callback) {
-//    this['allow_' + type](pattern, callback);
-//  };
-
-  Store.prototype.allow_query = function (collection, callback) {
-    this.shareClient.use('query', function (shareRequest, next) {
-      if (collection === shareRequest.collection) return next();
-      var session = shareRequest.agent.connectSession;
-      shareRequest.query = deepCopy(shareRequest.query);
-      callback(shareRequest.query, session, next);
-    });
-  };
-
-  Store.prototype.allow_doc = function (collection, callback) {
-    this.shareClient.filter( function (collectionName, docName, snapshot, next) {
-      if (collectionName !== collection) return next();
-      var useragent = this;
-      var doc = Object.create(snapshot.data, {
-        id: {value: docName}
-      });
-      return callback(doc, useragent.connectSession, next);
-    });
-  };
-
-  Store.prototype.allow_create = function (collection, callback) {
-  };
-
-  Store.prototype.allow_destroy = function (collection, callback) {
-  };
-
-  Store.prototype.allow_all = function (pattern, callback) {
-  };
-
-  Store.prototype.allow_change = function (pattern, callback) {
-  };
-
-  Store.prototype.allow_insert = function (pattern, callback) {
-  };
-
-  Store.prototype.allow_remove = function (pattern, callback) {
-  };
-
-  Store.prototype.allow_move = function (pattern, callback) {
-  };
-
-  Store.prototype.allow_stringInsert = function (pattern, callback) {
-  };
-
-  Store.prototype.allow_stringRemove = function (pattern, callback) {
   };
 }
 
@@ -412,19 +317,136 @@ function createWriteHelper (shareEvent, snapshotKey) {
   };
 }
 
-function isRelevantNonChange (event, pattern, shareRequest) {
-  var collection = shareRequest.collection; if (collection !== pattern.slice(0, collection.length)) {
-    return false;
+function collectionMatchesPattern (collection, pattern) {
+  return collection === pattern.slice(0, collection.length);
+}
+
+function opToRacerMethod (op) {
+  var item = op[0];
+
+  // object replace, object insert, or object delete
+  if ((item.oi !== void 0) || (item.od !== void 0)) {
+    return 'change';
+
+  // list replace
+  } else if (item.li && item.ld) {
+    return 'change';
+
+  // List insert
+  } else if (item.li) {
+    return 'insert';
+
+  // List remove
+  } else if (item.ld) {
+    return 'remove';
+
+  // List move
+  } else if (item.lm !== void 0) {
+    return 'move';
+
+  // String insert
+  } else if (item.si) {
+    return 'insert';
+
+  // String remove
+  } else if (item.sd) {
+    return 'stringRemove';
+
+  // Increment
+  } else if (item.na !== void 0) {
+    return 'increment';
+  }
+}
+
+function segmentsFor (racerEvent, opData) {
+  var item = opData.op[0];
+  // segments relative to doc root
+  var relativeSegments = item.p;
+
+  switch (racerEvent) {
+    case 'change':
+    case 'increment':
+      return relativeSegments;
+    case 'insert':
+    case 'remove':
+    case 'move':
+    case 'stringInsert':
+    case 'stringRemove':
+      return relativeSegments.slice(0, -1);
   }
 
-  var opData = shareRequest.opData;
-  if (opData.create) return false;
+  if (racerEvent === 'change') {
+    return relativeSegments;
+  }
 
-  var op = opData.op;
-  var parsed = opToRacerSemantics(op);
-  var type = parsed[0];
+  if (racerEvent === 'insert' || racerEvent === 'remove' || racerEvent === 'move') {
+    return relativeSegments[relativeSegments.length-1];
+  }
+}
 
-  if (type !== event) return false;
+function relevantPath (pattern, relativeSegments) {
+  // Check for patterns "collection**" or e.g., "collection.*.x.y.z**"
+  if (pattern.slice(pattern.length-2, pattern.length) === '**') {
+  } else {
+    // Handle e.g., pattern = "collection.*.x.y.z"
+    var patternSegments = pattern.split('.');
+    if (patternSegments[1] !== '*') {
+      console.warn('Unexpected pattern', pattern);
+    }
+    var patternRelativeSegments = patternSegments.slice(2);
 
-  return parsed;
+    // Pass to next middleware if pattern does not match the mutated path
+    if (relativeSegments.length !== patternRelativeSegments.length) {
+      return false;
+    }
+
+    if (-1 === patternRelativeSegments.indexOf('*')) {
+      return relativeSegments.join('.') === patternRelativeSegments.join('.');
+    }
+    var regExp = patternToRegExp(patternRelativeSegments.join('.'));
+    var matches = regExp.exec(relativeSegments.join('.'));
+    return matches;
+  }
+}
+
+function calcChangeTo (racerMethod, opData) {
+  var item = opData.op[0];
+  if (racerMethod === 'change') {
+    return item.oi || // object replace, insert, or delete
+      item.li; // list replace
+  } else if (racerMethod === 'stringInsert') {
+    var index = relativeSegments[relativeSegments.length-1];
+    var text = item.si;
+    var currText = lookupSegments(relativeSegments, snapshotData);
+    return currText.slice(0, index) +
+      text +
+      currText.slice(index);
+  } else if (racerMethod === 'stringRemove') {
+    var index = relativeSegments[relativeSegments.length-1];
+    var text = item.sd;
+    var currText = lookupSegments(relativeSegments, snapshotData);
+    return currText.slice(0, index) + currText.slice(index + text.length);
+  } else if (racerMethod === 'increment') {
+    var incrBy = item.na;
+    return lookupSegments(relativeSegments, snapshotData) + incrBy;
+  }
+}
+
+function patternToRegExp (pattern) {
+  var regExpString = pattern
+    .replace(/\./g, "\\.")
+    .replace(/\*/g, "([^.]+)");
+  return new RegExp(regExpString);
+}
+
+function lookupSegments (segments, object) {
+  var curr = object;
+  for (var i = 0, l = segments.length; i < l; i++) {
+    var segment = segments[i];
+    if (/^\d+$/.test(segment)) {
+      segment = parseInt(segment, 10);
+    }
+    curr = curr[segment];
+  }
+  return curr;
 }
