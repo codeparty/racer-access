@@ -1,3 +1,5 @@
+# TODO
+# - Should access control "change" ruls on subpaths impact a model.add ?
 async = require 'async'
 expect = require 'expect.js'
 racer = require 'racer'
@@ -530,5 +532,168 @@ describe 'access control on the server', ->
         shouldAllowAndBlockForAll()
 
       describe 'for all ops on a particular path', ->
+        beforeEach ->
+          @store.allow 'all', 'widgets.*.age', (docId, relPath, opData, docBeingUpdated, session) ->
+            expect(relPath).to.equal 'age'
+            return 'Unauthorized' if docBeingUpdated.secret isnt SECRET
+
+        it 'should not block operations that do not match the path', (done) ->
+          widgetId = @model.add 'widgets', {secret: 'not' + SECRET}, (err) =>
+            expect(err).to.equal undefined
+            done()
+
+        describe 'attribute setting', ->
+          it 'should allow permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: SECRET}, (err) =>
+              expect(err).to.equal undefined
+              @model.set "widgets.#{widgetId}.name", 28, (err) ->
+                expect(err).to.equal undefined
+                done()
+
+          it 'should block non-permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: 'not' + SECRET}, (err) =>
+              expect(err).to.equal undefined
+              @model.set "widgets.#{widgetId}.age", 28, (err) ->
+                expect(err).to.equal 'Unauthorized'
+                done()
+
+        describe 'caused by increment', ->
+          it 'should allow permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: SECRET}, (err) =>
+              expect(err).to.equal undefined
+              @model.increment "widgets.#{widgetId}.age", 28, (err) ->
+                expect(err).to.equal undefined
+                done()
+
+          it 'should block non-permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: 'not' + SECRET}, (err) =>
+              expect(err).to.equal undefined
+              @model.increment "widgets.#{widgetId}.age", 28, (err) ->
+                expect(err).to.equal 'Unauthorized'
+                done()
+
+        describe 'delete an attribute', ->
+          it 'should allow permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: SECRET, age: 22}, (err) =>
+              expect(err).to.equal undefined
+              @model.del "widgets.#{widgetId}.age", (err) ->
+                expect(err).to.equal undefined
+                done()
+
+          it 'should block non-permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: 'not' + SECRET, age: 22}, (err) =>
+              expect(err).to.equal undefined
+              @model.del "widgets.#{widgetId}.age", (err) ->
+                expect(err).to.equal 'Unauthorized'
+                done()
+
+        describe 'caused by list element replacement', ->
+          beforeEach ->
+            @store.allow 'all', 'widgets.*.list.*', (docId, relPath, opData, docBeforeReplace, session) ->
+              return 'Unauthorized' if docBeforeReplace.secret isnt SECRET
+
+          it 'should allow permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: SECRET, list: ['a', 'b']}, (err) =>
+              expect(err).to.equal undefined
+              @model.set "widgets.#{widgetId}.list.0", 'x', (err) ->
+                expect(err).to.equal undefined
+                done()
+
+          it 'should block non-permissible changes', (done) ->
+            widgetId = @model.add 'widgets', {secret: 'not' + SECRET, list: ['a', 'b']}, (err) =>
+              expect(err).to.equal undefined
+              @model.set "widgets.#{widgetId}.list.0", 'x', (err) ->
+                expect(err).to.equal 'Unauthorized'
+                done()
+
+        describe 'caused by stringInsert/stringRemove', ->
+          beforeEach ->
+            @store.allow 'all', 'widgets.*.text', (docId, relPath, opData, docBeforeReplace, session) ->
+              return 'Unauthorized' if docBeforeReplace.secret isnt SECRET
+          describe 'caused by stringInsert', ->
+            it 'should allow permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: SECRET, text: 'abc'}, (err) =>
+                expect(err).to.equal undefined
+                @model.stringInsert "widgets.#{widgetId}.text", 1, 'xyz', (err) =>
+                  expect(err).to.equal undefined
+                  done()
+
+            it 'should block non-permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: 'not' + SECRET, text: 'abc'}, (err) =>
+                expect(err).to.equal undefined
+                @model.stringInsert "widgets.#{widgetId}.text", 1, 'xyz', (err) =>
+                  expect(err).to.equal 'Unauthorized'
+                  done()
+
+          describe 'caused by stringRemove', ->
+            it 'should allow permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: SECRET, text: 'abc'}, (err) =>
+                expect(err).to.equal undefined
+                @model.stringRemove "widgets.#{widgetId}.text", 1, 1, (err) =>
+                  expect(err).to.equal undefined
+                  done()
+            it 'should block non-permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: 'not' + SECRET, text: 'abc'}, (err) =>
+                expect(err).to.equal undefined
+                @model.stringInsert "widgets.#{widgetId}.text", 1, 1, (err) =>
+                  expect(err).to.equal 'Unauthorized'
+                  done()
+
+        describe 'insert, remove, move in a list', ->
+          beforeEach ->
+            @store.allow 'all', 'widgets.*.list', (docId, relPath, opData, docBeforeReplace, session) ->
+              return 'Unauthorized' if docBeforeReplace.secret isnt SECRET
+          describe 'caused by removing items from a list', ->
+            it 'should allow permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: SECRET, list: ['a', 'b', 'c']}, (err) =>
+                expect(err).to.equal undefined
+                @model.remove "widgets.#{widgetId}.list", 0, 2, (err) =>
+                  expect(err).to.equal undefined
+                  done()
+
+            it 'should block non-permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: 'not' + SECRET, list: ['a', 'b', 'c']}, (err) =>
+                expect(err).to.equal undefined
+                @model.remove "widgets.#{widgetId}.list", 0, 2, (err) =>
+                  expect(err).to.equal 'Unauthorized'
+                  done()
+          describe 'caused by inserting items into a list', ->
+            it 'should allow permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: SECRET}, (err) =>
+                expect(err).to.equal undefined
+                @model.insert "widgets.#{widgetId}.list", 0, ['a', 'b'], (err) =>
+                  expect(err).to.equal undefined
+                  done()
+
+            it 'should block non-permissible changes', (done) ->
+              widgetId = @model.add 'widgets', {secret: 'not' + SECRET, admin: true}, (err) =>
+                expect(err).to.equal undefined
+                @model.insert "widgets.#{widgetId}.list", 0, ['a', 'b'], (err) =>
+                  expect(err).to.equal 'Unauthorized'
+                  done()
+          describe 'caused by moving items in a list', ->
+            it 'should allow permissible moves', (done) ->
+              widgetId = @model.add 'widgets', {secret: SECRET, list: ['a', 'b', 'c']}, (err) =>
+                expect(err).to.equal undefined
+                @model.move "widgets.#{widgetId}.list", 0, 1, 1, (err) =>
+                  expect(err).to.equal undefined
+                  done()
+            it 'should block non-permissible moves', (done) ->
+              widgetId = @model.add 'widgets', {secret: 'not' + SECRET, list: ['a', 'b', 'c'], admin: true}, (err) =>
+                expect(err).to.equal undefined
+                @model.move "widgets.#{widgetId}.list", 0, 1, 1, (err) =>
+                  expect(err).to.equal 'Unauthorized'
+                  done()
 
       describe 'for all ops on a particular subtree', ->
+        describe 'caused by doc creation', ->
+        describe 'caused by doc attribute setting', ->
+        describe 'caused by increment', ->
+        describe 'caused by document destruction', ->
+        describe 'caused by document attribute deletion', ->
+        describe 'caused by list element replacement', ->
+        describe 'caused by stringInsert', ->
+        describe 'caused by stringRemove', ->
+        describe 'caused by removing items from a list', ->
+        describe 'caused by inserting items into a list', ->
+        describe 'caused by moving items in a list', ->

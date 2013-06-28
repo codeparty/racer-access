@@ -273,6 +273,16 @@ function plugin (racer, options) {
         if (pattern === collection + '**') {
           var relPath = '';
           return validate(docName, relPath, opData, snapshotData, connectSession);
+        } else if (! opData.del) {
+          var racerMethod = opToRacerMethod(opData.op);
+          var relativeSegments = segmentsFor(racerMethod, opData);
+          var isRelevantPath = relevantPath(pattern, relativeSegments);
+          if (! isRelevantPath) return;
+          if (isRelevantPath.length > 1) {
+            return validate.apply(null, [docName].concat(isRelevantPath.slice(1)).concat(relativeSegments.join('.'), opData, snapshotData, connectSession));
+          } else {
+            return validate(docName, relativeSegments.join('.'), opData, snapshotData, connectSession);
+          }
         }
       }
     );
