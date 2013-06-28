@@ -5,6 +5,6 @@ test:
 		--reporter spec \
 		--grep "$(g)" \
 		--compilers .coffee:coffee-script \
-		./test.coffee | tee $(OUT_FILE)
+		./test/*.coffee | tee $(OUT_FILE)
 
 .PHONY: test
