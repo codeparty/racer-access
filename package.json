@@ -17,6 +17,7 @@
     "coffee-script": "*",
     "express": "*",
     "racer-browserchannel": "*",
+    "sinon": "*",
     "expect.js": "*"
   },
   "scripts": {
