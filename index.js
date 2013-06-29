@@ -99,6 +99,7 @@ function plugin (racer, options) {
    */
   Store.prototype._allow_doc = function (collectionName, callback) {
     this.shareClient.filter( function (collection, docId, snapshot, next) {
+      if (! docId) docId = snapshot.docName;
       if (collectionName !== collection) return next();
       var useragent = this;
       var doc = snapshot.data;
@@ -211,7 +212,8 @@ function plugin (racer, options) {
         if (! isRelevantPath) return;
 
         var changeTo = calcChangeTo(racerMethod, opData, relativeSegments, snapshotData);
-        var index = relativeSegments[relativeSegments.length-1];
+        var segments = opData.op[0].p;
+        var index = segments[segments.length-1];
         var howMany = 1;
         return validate(docName, index, howMany, snapshotData, connectSession);
 
@@ -230,7 +232,8 @@ function plugin (racer, options) {
         var isRelevantPath = relevantPath(pattern, relativeSegments);
         if (! isRelevantPath) return;
 
-        var index = relativeSegments[relativeSegments.length-1];
+        var segments = opData.op[0].p;
+        var index = segments[segments.length-1];
         var toInsert = [opData.op[0].li];
         return validate(docName, index, toInsert, snapshotData, connectSession);
       }
@@ -248,8 +251,9 @@ function plugin (racer, options) {
         var isRelevantPath = relevantPath(pattern, relativeSegments);
         if (! isRelevantPath) return;
 
-        var from = relativeSegments[relativeSegments.length-1];
-        var to = opData.op[0].lm;
+        var segments = opData.op[0].p;
+        var from = segments[segments.length-1];
+        var to = opData.op[0].lm - 1;
         var howMany = 1;
         return validate(docName, from, to, howMany, snapshotData, connectSession);
       }
@@ -291,9 +295,16 @@ function plugin (racer, options) {
     this.shareClient._validatorsDel.push(
       function (collection, docName, opData, snapshotData, connectSession) {
         if (! collectionMatchesPattern(collection, pattern)) return;
-        if (pattern === collection + '**') {
-          var relPath = '';
-          return validate(docName, relPath, opData, snapshotData, connectSession);
+        if ((pattern === '**') || (pattern === collection + '**')) {
+          if (opData.op) {
+            var racerMethod = opToRacerMethod(opData.op);
+            var relativeSegments = segmentsFor(racerMethod, opData);
+            var relPath = relativeSegments.join('.');
+            return validate(docName, relPath, opData, snapshotData, connectSession);
+          } else { // else deleting entire document
+            var relPath = '';
+            return validate(docName, relPath, opData, snapshotData, connectSession);
+          }
         } else if (! opData.del) {
           var racerMethod = opToRacerMethod(opData.op);
           var relativeSegments = segmentsFor(racerMethod, opData);
@@ -383,14 +394,6 @@ function segmentsFor (racerEvent, opData) {
     case 'stringRemove':
       return relativeSegments.slice(0, -1);
   }
-
-  if (racerEvent === 'change') {
-    return relativeSegments;
-  }
-
-  if (racerEvent === 'insert' || racerEvent === 'remove' || racerEvent === 'move') {
-    return relativeSegments[relativeSegments.length-1];
-  }
 }
 
 function relevantPath (pattern, relativeSegments) {
@@ -415,6 +418,13 @@ function relevantPath (pattern, relativeSegments) {
     }
     var regExp = patternToRegExp(patternRelativeSegments.join('.'));
     var matches = regExp.exec(relativeSegments.join('.'));
+    if (matches) {
+      for (var i = 1, l = matches.length; i < l; i++) {
+        if (/^\d+$/.test(matches[i])) {
+          matches[i] = parseInt(matches[i], 10);
+        }
+      }
+    }
     return matches;
   }
 }
