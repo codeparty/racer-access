@@ -33,6 +33,11 @@ expressApp
 expressApp.listen 8000
 
 describe 'session access', ->
+  before (done) ->
+    mongo.dropDatabase (err) ->
+      return done err if err
+      redis.flushdb done
+
   describe 'query access control handlers', ->
     it 'should have access to the session', (done) ->
       expressApp.get '/query', (req, res, next) ->
@@ -59,7 +64,7 @@ describe 'session access', ->
       expressApp.get '/doc', (req, res, next) ->
         model = req.getModel()
         query = model.query 'widgets', {}
-        model.fetch 'widgets.blah', (err) ->
+        model.fetch "widgets.#{widgetId}", (err) ->
           expect(err).to.equal undefined
           res.send 200
       store.allow 'doc', 'widgets', (docId, doc, session, next) ->
@@ -68,7 +73,7 @@ describe 'session access', ->
         return
 
       otherModel = store.createModel()
-      otherModel.add 'widgets', {id: 'blah', name: 'blah'}, (err) ->
+      widgetId = otherModel.add 'widgets', {name: 'blah'}, (err) ->
         expect(err).to.equal undefined
         req = http.request
           method: 'get'
