@@ -5,6 +5,7 @@
 # - Should access control "change" ruls on subpaths impact a model.add ?
 async = require 'async'
 expect = require 'expect.js'
+sinon = require 'sinon'
 racer = require 'racer'
 livedb = require 'livedb'
 {LiveDbMongo} = require 'livedb-mongo'
@@ -76,7 +77,7 @@ shouldAllowAndBlockForAll = ->
       widgetId = @model.add 'widgets', {secret: 'not' + SECRET, admin: true}, (err) =>
         expect(err).to.equal undefined
         @model.del "widgets.#{widgetId}", (err) =>
-          expect(err).to.equal undefined
+          expect(err).to.equal 'Unauthorized'
           done()
 
   describe 'caused by document attribute deletion', ->
@@ -485,7 +486,7 @@ describe 'access control on the server', ->
         widgetId = @model.add 'widgets', {secret: 'not' + SECRET}, (err) =>
           expect(err).to.equal undefined
           @model.del "widgets.#{widgetId}", (err) =>
-            expect(err).to.equal undefined
+            expect(err).to.equal 'Unauthorized'
             done()
 
       it 'should allow permissible attribute deletes', (done) ->
@@ -701,12 +702,212 @@ describe 'access control on the server', ->
 
   describe 'access to parameters in store.allow callbacks', ->
     describe 'for "query"', ->
-      it 'xxx should have access to the query', (done) ->
+      it 'should have access to the query', (done) ->
+        spy = sinon.spy()
         @store.allow 'query', 'widgets', (query, session, next) ->
-          expect(query).to.equal queryObject
+          expect(query).to.eql queryObject
+          spy()
           next()
 
         queryObject = {name: 'qbert'}
         @model.subscribe @model.query('widgets', queryObject), (err) ->
           expect(err).to.equal undefined
+          expect(spy.calledOnce).to.equal true
           done()
+
+    describe 'for "doc"', ->
+      it 'should have access to docId and doc', (done) ->
+        spy = sinon.spy()
+        @store.allow 'doc', 'widgets', (docId, doc, session, next) ->
+          expect(docId).to.equal widgetId
+          expect(doc).to.eql newDoc
+          spy()
+          next()
+
+        otherModel = @store.createModel()
+
+        newDoc = {name: 'qbert'}
+        widgetId = otherModel.add 'widgets', newDoc, (err) =>
+          expect(err).to.equal undefined
+          @model.subscribe "widgets.#{widgetId}", (err) ->
+            expect(err).to.equal undefined
+            expect(spy.calledOnce).to.equal true
+            done()
+
+    describe 'for "create"', ->
+      it 'should have access to docId and newDoc', (done) ->
+        spy = sinon.spy()
+        @store.allow 'create', 'widgets', (docId, newDoc, session) ->
+          expect(docId).to.equal widgetId
+          expect(newDoc).to.eql widget
+          spy()
+          return
+
+        widget = {name: 'qbert'}
+        widgetId = @model.add 'widgets', widget, (err) ->
+          expect(err).to.equal undefined
+          expect(spy.calledOnce).to.equal true
+          done()
+
+    describe 'for "change"', ->
+      it 'should have access to docId, newValue, docBeforeChange', (done) ->
+        spy = sinon.spy()
+        @store.allow 'change', 'widgets.*.name', (docId, newValue, docBeforeChange, session) ->
+          expect(docId).to.equal widgetId
+          expect(newValue).to.equal 'qbot'
+          expect(docBeforeChange.name).to.equal 'qbert'
+          expect(docBeforeChange).to.eql widget
+          spy()
+          return
+        widget = {name: 'qbert'}
+        widgetId = @model.add 'widgets', widget, (err) =>
+          expect(err).to.equal undefined
+          @model.set "widgets.#{widgetId}.name", 'qbot', (err) ->
+            expect(err).to.equal undefined
+            expect(spy.calledOnce).to.equal true
+            done()
+
+      describe 'with > 1 "*"s in the pattern', ->
+        it 'should have access to docId, captures, newValue, docBeforeChange', (done) ->
+          spy = sinon.spy()
+          @store.allow 'change', 'widgets.*.list.*.name', (docId, listIndex, newValue, docBeforeChange, session) ->
+            expect(docId).to.equal widgetId
+            expect(listIndex).to.equal 0
+            expect(newValue).to.equal 'qbot'
+            expect(docBeforeChange.list[0].name).to.equal 'qbert'
+            expect(docBeforeChange).to.eql widget
+            spy()
+            return
+          widget = {list: [{name: 'qbert'}]}
+          widgetId = @model.add 'widgets', widget, (err) =>
+            expect(err).to.equal undefined
+            @model.set "widgets.#{widgetId}.list.0.name", 'qbot', (err) ->
+              expect(err).to.equal undefined
+              expect(spy.calledOnce).to.equal true
+              done()
+
+    describe 'for "insert"', ->
+      it 'should have access to docId, index, elementsToInsert, docBeforeInsert', (done) ->
+        spy = sinon.spy()
+        @store.allow 'insert', 'widgets.*.list', (docId, index, elementsToInsert, docBeforeInsert, session) ->
+          spy()
+          expect(docId).to.equal widgetId
+          if spy.callCount is 1
+            expect(index).to.equal 1
+            expect(elementsToInsert).to.eql ['a']
+            expect(docBeforeInsert.list).to.eql ['x', 'y']
+          if spy.callCount is 2
+            expect(index).to.equal 2
+            expect(elementsToInsert).to.eql ['b']
+            expect(docBeforeInsert.list).to.eql ['x', 'a', 'y']
+          return
+        widgetId = @model.add 'widgets', {list: ['x', 'y']}, (err) =>
+          expect(err).to.equal undefined
+          @model.insert "widgets.#{widgetId}.list", 1, ['a', 'b'], (err) ->
+            expect(err).to.equal undefined
+            expect(spy.callCount).to.equal 2
+            done()
+
+    describe 'for "remove"', ->
+      it 'should have access to docId, index, howMany, docBeforeRemove', (done) ->
+        spy = sinon.spy()
+        @store.allow 'remove', 'widgets.*.list', (docId, index, howMany, docBeforeRemove, session) ->
+          spy()
+          expect(docId).to.equal widgetId
+          if spy.callCount is 1
+            expect(index).to.equal 1
+            expect(howMany).to.equal 1
+            expect(docBeforeRemove.list).to.eql ['x', 'y', 'z']
+          if spy.callCount is 2
+            expect(index).to.equal 2
+            expect(howMany).to.equal 1
+            expect(docBeforeRemove.list).to.eql ['x', 'z']
+          return
+        widgetId = @model.add 'widgets', {list: ['x', 'y', 'z']}, (err) =>
+          expect(err).to.equal undefined
+          @model.remove "widgets.#{widgetId}.list", 1, 2, (err) ->
+            expect(err).to.equal undefined
+            expect(spy.callCount).to.equal 2
+            done()
+    describe 'for "move"', ->
+      it 'should have access to docId, fromm, to, howMany, docBeforeInsert', (done) ->
+        spy = sinon.spy()
+        @store.allow 'move', 'widgets.*.list', (docId, from, to, howMany, docBeforeMove, session) ->
+          spy()
+          expect(docId).to.equal widgetId
+          if spy.callCount is 1
+            expect(from).to.equal 1
+            expect(to).to.equal 3
+            expect(howMany).to.equal 1
+            expect(docBeforeMove.list).to.eql ['w', 'x', 'y', 'z']
+          if spy.callCount is 2
+            # expect(from).to.equal 1
+            expect(from).to.equal 1
+            expect(to).to.equal 3
+            expect(howMany).to.equal 1
+            expect(docBeforeMove.list).to.eql ['w', 'y', 'z', 'x']
+          return
+        widgetId = @model.add 'widgets', {list: ['w', 'x', 'y', 'z']}, (err) =>
+          expect(err).to.equal undefined
+          @model.move "widgets.#{widgetId}.list", 1, 3, 2, (err) =>
+            expect(err).to.equal undefined
+            expect(@model.get "widgets.#{widgetId}.list").to.eql ['w', 'z', 'x', 'y']
+            expect(spy.callCount).to.equal 2
+            done()
+    describe 'for "del"', ->
+      describe 'deleting documents', ->
+        it 'should have access to docId, docToRemove,', (done) ->
+          spy = sinon.spy()
+          @store.allow 'del', 'widgets', (docId, docToRemove, session) ->
+            spy()
+            expect(docId).to.equal widgetId
+            expect(docToRemove).to.eql widget
+            return
+          widget = {name: 'qbert'}
+          widgetId = @model.add 'widgets', widget, (err) =>
+            expect(err).to.equal undefined
+            @model.del "widgets.#{widgetId}", (err) ->
+              expect(err).to.equal undefined
+              expect(spy.calledOnce).to.equal true
+              done()
+
+      describe 'deleting attributes', ->
+        it 'should have access to docId, valueToDel, docBeforeDel', (done) ->
+          spy = sinon.spy()
+          @store.allow 'del', 'widgets.*.toDel', (docId, valueToDel, docBeforeDel, session) ->
+            spy()
+            expect(docId).to.equal widgetId
+            expect(valueToDel).to.equal 'qbert'
+            expect(docBeforeDel).to.eql widget
+            return
+          widget = {name: 'qbert'}
+          widgetId = @model.add 'widgets', widget, (err) =>
+            expect(err).to.equal undefined
+            @model.del "widgets.#{widgetId}.name", (err) ->
+              expect(err).to.equal undefined
+              expect(spy.calledOnce).to.equal true
+              done()
+
+    describe 'for "all"', ->
+      ['**', 'widgets**'].forEach (pattern) ->
+        describe "for '#{pattern}'", ->
+          it 'should have access to docId, relPath, opData, docBeingUpdated', (done) ->
+            spy = sinon.spy()
+            @store.allow 'all', pattern, (docId, relPath, opData, docBeingUpdated, session) ->
+              spy()
+              expect(docId).to.equal widgetId
+              if spy.callCount is 1
+                expect(relPath).to.equal ''
+                expect(opData.create).to.be.ok()
+                expect(docBeingUpdated).to.equal undefined
+              if spy.callCount is 2
+                expect(relPath).to.equal 'name'
+                expect(docBeingUpdated).to.eql widget
+              return
+            widget = {name: 'qbert'}
+            widgetId = @model.add 'widgets', widget, (err) =>
+              expect(err).to.equal undefined
+              @model.set "widgets.#{widgetId}.name", 'qbot', (err) ->
+                expect(err).to.equal undefined
+                expect(spy.callCount).to.equal 2
+                done()
