@@ -10,7 +10,7 @@ livedb = require 'livedb'
 {LiveDbMongo} = require 'livedb-mongo'
 mongoskin = require 'mongoskin'
 
-accessPlugin = require './index'
+accessPlugin = require '../index'
 racer.use accessPlugin
 
 SECRET = 'shhhhhhhhhhhh'
@@ -698,3 +698,15 @@ describe 'access control on the server', ->
         describe 'caused by removing items from a list', ->
         describe 'caused by inserting items into a list', ->
         describe 'caused by moving items in a list', ->
+
+  describe 'access to parameters in store.allow callbacks', ->
+    describe 'for "query"', ->
+      it 'xxx should have access to the query', (done) ->
+        @store.allow 'query', 'widgets', (query, session, next) ->
+          expect(query).to.equal queryObject
+          next()
+
+        queryObject = {name: 'qbert'}
+        @model.subscribe @model.query('widgets', queryObject), (err) ->
+          expect(err).to.equal undefined
+          done()
