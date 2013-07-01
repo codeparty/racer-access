@@ -81,10 +81,19 @@ function plugin (racer, options) {
    */
   Store.prototype._allow_query = function (collectionName, callback) {
     this.shareClient.use('query', function (shareRequest, next) {
-      if (collectionName !== shareRequest.collection) return next();
+      if ((collectionName !== '**') && (collectionName !== shareRequest.collection)) {
+        return next();
+      }
       var session = shareRequest.agent.connectSession;
       shareRequest.query = deepCopy(shareRequest.query);
-      callback(shareRequest.query, session, next);
+      var origin = (shareRequest.agent.stream.isServer) ?
+        'server' :
+        'browser';
+      if (collectionName === '**') {
+        callback(shareRequest.collection, shareRequest.query, session, origin, next);
+      } else {
+        callback(shareRequest.query, session, origin, next);
+      }
     });
   };
 
@@ -100,10 +109,20 @@ function plugin (racer, options) {
   Store.prototype._allow_doc = function (collectionName, callback) {
     this.shareClient.filter( function (collection, docId, snapshot, next) {
       if (! docId) docId = snapshot.docName;
-      if (collectionName !== collection) return next();
+      if ((collectionName !== '**') && (collectionName !== collection)) {
+        return next();
+      }
+
       var useragent = this;
       var doc = snapshot.data;
-      return callback(docId, doc, useragent.connectSession, next);
+      var origin = (useragent.stream.isServer) ?
+        'server' :
+        'browser';
+      if (collectionName === '**') {
+        return callback(collection, docId, doc, useragent.connectSession, origin, next);
+      } else {
+        return callback(docId, doc, useragent.connectSession, origin, next);
+      }
     });
   };
 

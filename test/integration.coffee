@@ -47,7 +47,7 @@ describe 'session access', ->
       redis.flushdb done
 
   describe 'query access control handlers', ->
-    it 'should have access to the session', (done) ->
+    it 'should have access to the session and origin', (done) ->
       testIndex = CURR_TEST
       path = '/query'
       expressApp.get path, (req, res, next) ->
@@ -56,9 +56,10 @@ describe 'session access', ->
         model.subscribe query, (err) ->
           expect(err).to.equal undefined
           res.send 200
-      store.allow 'query', 'widgets', (query, session, next) ->
+      store.allow 'query', 'widgets', (query, session, origin, next) ->
         if testIndex is CURR_TEST
           expect(session.name).to.equal 'Brian'
+          expect(origin).to.equal 'server'
         next()
         return
 
@@ -73,7 +74,7 @@ describe 'session access', ->
       req.end()
 
   describe 'document access control handlers', ->
-    it 'should have access to the session', (done) ->
+    it 'should have access to the session and origin', (done) ->
       testIndex = CURR_TEST
       path = '/doc'
       expressApp.get path, (req, res, next) ->
@@ -81,9 +82,10 @@ describe 'session access', ->
         model.fetch "widgets.#{widgetId}", (err) ->
           expect(err).to.equal undefined
           res.send 200
-      store.allow 'doc', 'widgets', (docId, doc, session, next) ->
+      store.allow 'doc', 'widgets', (docId, doc, session, origin, next) ->
         if testIndex is CURR_TEST
           expect(session.name).to.equal 'Brian'
+          expect(origin).to.equal 'server'
         next()
         return
 

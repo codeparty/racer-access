@@ -209,7 +209,7 @@ describe 'access control on the server', ->
   describe 'read access', ->
     describe 'for queries', ->
       beforeEach ->
-        @store.allow 'query', 'widgets', (query, session, next) ->
+        @store.allow 'query', 'widgets', (query, session, origin, next) ->
           if query.secret is SECRET
             next()
           else
@@ -229,7 +229,7 @@ describe 'access control on the server', ->
 
     describe 'for docs', ->
       beforeEach ->
-        @store.allow 'doc', 'widgets', (docId, doc, session, next) ->
+        @store.allow 'doc', 'widgets', (docId, doc, session, origin, next) ->
           if doc.secret is SECRET
             next()
           else
@@ -702,10 +702,11 @@ describe 'access control on the server', ->
 
   describe 'access to parameters in store.allow callbacks', ->
     describe 'for "query"', ->
-      it 'should have access to the query', (done) ->
+      it 'should have access to the query and the origin', (done) ->
         spy = sinon.spy()
-        @store.allow 'query', 'widgets', (query, session, next) ->
+        @store.allow 'query', 'widgets', (query, session, origin, next) ->
           expect(query).to.eql queryObject
+          expect(origin).to.equal 'server'
           spy()
           next()
 
@@ -715,12 +716,29 @@ describe 'access control on the server', ->
           expect(spy.calledOnce).to.equal true
           done()
 
+      describe 'with **', ->
+        it 'should have access to the collection, query, and origin', (done) ->
+          spy = sinon.spy()
+          @store.allow 'query', '**', (collection, query, session, origin, next) ->
+            expect(collection).to.equal 'widgets'
+            expect(query).to.eql queryObject
+            expect(origin).to.equal 'server'
+            spy()
+            next()
+
+          queryObject = {name: 'qbert'}
+          @model.subscribe @model.query('widgets', queryObject), (err) ->
+            expect(err).to.equal undefined
+            expect(spy.calledOnce).to.equal true
+            done()
+
     describe 'for "doc"', ->
-      it 'should have access to docId and doc', (done) ->
+      it 'should have access to docId, doc, and origin', (done) ->
         spy = sinon.spy()
-        @store.allow 'doc', 'widgets', (docId, doc, session, next) ->
+        @store.allow 'doc', 'widgets', (docId, doc, session, origin, next) ->
           expect(docId).to.equal widgetId
           expect(doc).to.eql newDoc
+          expect(origin).to.equal 'server'
           spy()
           next()
 
@@ -733,6 +751,27 @@ describe 'access control on the server', ->
             expect(err).to.equal undefined
             expect(spy.calledOnce).to.equal true
             done()
+
+      describe 'with **', ->
+        it 'should have access to collection, docId, doc, and origin', (done) ->
+          spy = sinon.spy()
+          @store.allow 'doc', '**', (collection, docId, doc, session, origin, next) ->
+            expect(collection).to.equal 'widgets'
+            expect(docId).to.equal widgetId
+            expect(doc).to.eql newDoc
+            expect(origin).to.equal 'server'
+            spy()
+            next()
+
+          otherModel = @store.createModel()
+
+          newDoc = {name: 'qbert'}
+          widgetId = otherModel.add 'widgets', newDoc, (err) =>
+            expect(err).to.equal undefined
+            @model.subscribe "widgets.#{widgetId}", (err) ->
+              expect(err).to.equal undefined
+              expect(spy.calledOnce).to.equal true
+              done()
 
     describe 'for "create"', ->
       it 'should have access to docId and newDoc', (done) ->
