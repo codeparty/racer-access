@@ -756,7 +756,7 @@ describe 'access control on the server', ->
           expect(docId).to.equal widgetId
           expect(newValue).to.equal 'qbot'
           expect(docBeforeChange.name).to.equal 'qbert'
-          expect(docBeforeChange).to.eql widget
+          expect(docBeforeChange).to.eql {id: widgetId, name: 'qbert'}
           spy()
           return
         widget = {name: 'qbert'}
@@ -775,7 +775,7 @@ describe 'access control on the server', ->
             expect(listIndex).to.equal 0
             expect(newValue).to.equal 'qbot'
             expect(docBeforeChange.list[0].name).to.equal 'qbert'
-            expect(docBeforeChange).to.eql widget
+            expect(docBeforeChange).to.eql {id: widgetId, list: [{name: 'qbert'}]}
             spy()
             return
           widget = {list: [{name: 'qbert'}]}
@@ -861,7 +861,7 @@ describe 'access control on the server', ->
           @store.allow 'del', 'widgets', (docId, docToRemove, session) ->
             spy()
             expect(docId).to.equal widgetId
-            expect(docToRemove).to.eql widget
+            expect(docToRemove).to.eql {id: widgetId, name: 'qbert'}
             return
           widget = {name: 'qbert'}
           widgetId = @model.add 'widgets', widget, (err) =>
@@ -878,7 +878,7 @@ describe 'access control on the server', ->
             spy()
             expect(docId).to.equal widgetId
             expect(valueToDel).to.equal 'qbert'
-            expect(docBeforeDel).to.eql widget
+            expect(docBeforeDel).to.eql {id: widgetId, name: 'qbert'}
             return
           widget = {name: 'qbert'}
           widgetId = @model.add 'widgets', widget, (err) =>
@@ -902,7 +902,7 @@ describe 'access control on the server', ->
                 expect(docBeingUpdated).to.equal undefined
               if spy.callCount is 2
                 expect(relPath).to.equal 'name'
-                expect(docBeingUpdated).to.eql widget
+                expect(docBeingUpdated).to.eql {id: widgetId, name: 'qbert'}
               return
             widget = {name: 'qbert'}
             widgetId = @model.add 'widgets', widget, (err) =>
