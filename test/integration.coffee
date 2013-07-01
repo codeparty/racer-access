@@ -9,6 +9,9 @@ http = require 'http'
 racer.use racerAccess
 expressApp = express()
 expect = require 'expect.js'
+sinon = require 'sinon'
+soda = require 'soda'
+coffeeify = require 'coffeeify'
 
 mongo = mongoskin.db('mongodb://localhost:27017/test?auto_reconnect', safe: true)
 redis = require('redis').createClient()
@@ -18,6 +21,9 @@ redisObserver.select 8
 
 store = racer.createStore
   backend: livedb.client new LiveDbMongo(mongo), redis, redisObserver
+
+store.on 'bundle', (browserify) ->
+  browserify.require('racer', {expose: 'racer'})
 
 expressApp
   .use(express.cookieParser()) # TODO Remove this?
@@ -32,6 +38,8 @@ expressApp
 
 expressApp.listen 8000
 
+CURR_TEST = 0
+
 describe 'session access', ->
   before (done) ->
     mongo.dropDatabase (err) ->
@@ -40,14 +48,17 @@ describe 'session access', ->
 
   describe 'query access control handlers', ->
     it 'should have access to the session', (done) ->
-      expressApp.get '/query', (req, res, next) ->
+      testIndex = CURR_TEST
+      path = '/query'
+      expressApp.get path, (req, res, next) ->
         model = req.getModel()
         query = model.query 'widgets', {}
         model.subscribe query, (err) ->
           expect(err).to.equal undefined
           res.send 200
       store.allow 'query', 'widgets', (query, session, next) ->
-        expect(session.name).to.equal 'Brian'
+        if testIndex is CURR_TEST
+          expect(session.name).to.equal 'Brian'
         next()
         return
 
@@ -55,20 +66,24 @@ describe 'session access', ->
         method: 'get'
         hostname: 'localhost'
         port: 8000
-        path: '/query'
-      , (res) -> done()
+        path: path
+      , (res) ->
+        CURR_TEST++
+        done()
       req.end()
 
   describe 'document access control handlers', ->
     it 'should have access to the session', (done) ->
-      expressApp.get '/doc', (req, res, next) ->
+      testIndex = CURR_TEST
+      path = '/doc'
+      expressApp.get path, (req, res, next) ->
         model = req.getModel()
-        query = model.query 'widgets', {}
         model.fetch "widgets.#{widgetId}", (err) ->
           expect(err).to.equal undefined
           res.send 200
       store.allow 'doc', 'widgets', (docId, doc, session, next) ->
-        expect(session.name).to.equal 'Brian'
+        if testIndex is CURR_TEST
+          expect(session.name).to.equal 'Brian'
         next()
         return
 
@@ -79,26 +94,133 @@ describe 'session access', ->
           method: 'get'
           hostname: 'localhost'
           port: 8000
-          path: '/doc'
-        , (res) -> done()
+          path: path
+        , (res) ->
+          CURR_TEST++
+          done()
         req.end()
 
   describe 'write access control handlers', ->
     it 'should have access to the session', (done) ->
-      expressApp.get '/write', (req, res, next) ->
+      testIndex = CURR_TEST
+      path = '/write'
+      expressApp.get path, (req, res, next) ->
         model = req.getModel()
-        query = model.query 'widgets', {}
         model.add 'widgets', {name: 'qbert'}, (err) ->
           expect(err).to.equal undefined
           res.send 200
       store.allow 'all', '**', (docId, relPath, opData, docBeingUpdated, session) ->
-        expect(session.name).to.equal 'Brian'
+        if testIndex is CURR_TEST
+          expect(session.name).to.equal 'Brian'
         return
 
       req = http.request
         method: 'get'
         hostname: 'localhost'
         port: 8000
-        path: '/write'
-      , (res) -> done()
+        path: path
+      , (res) ->
+        CURR_TEST++
+        done()
       req.end()
+
+  describe 'origin detection during write access checks', ->
+    it 'should know whether an op was initiated on behalf of the browser', (done) ->
+      testIndex = CURR_TEST
+      path = '/write_origin_browserproxy'
+      expressApp.get path, (req, res, next) ->
+        model = req.getModel()
+        model.add 'widgets', {name: 'qbert'}, (err) ->
+          expect(err).to.equal undefined
+          res.send 200
+
+      store.allow 'all', '**', (docId, relPath, opData, docBeforeChange, session) ->
+        if testIndex is CURR_TEST
+          expect(opData.origin).to.equal 'server'
+          expect(session).to.not.equal undefined
+        return
+
+      req = http.request
+        method: 'get'
+        hostname: 'localhost'
+        port: 8000
+        path: path
+      , (res) ->
+        CURR_TEST++
+        done()
+      req.end()
+
+    it 'should know whether the an op was initiated by the server not on behalf of the browser', (done) ->
+      testIndex = CURR_TEST
+      store.allow 'all', '**', (docId, relPath, opData, docBeforeChange, session) ->
+        if testIndex is CURR_TEST
+          expect(opData.origin).to.equal 'server'
+          expect(session).to.equal undefined
+        return
+
+      model = store.createModel()
+      model.add 'widgets', {name: 'qbert'}, (err) ->
+        expect(err).to.equal undefined
+        CURR_TEST++
+        done()
+
+    it 'should know whether an op was initiated by the browser', (done) ->
+      @timeout 10000
+      testIndex = CURR_TEST
+      spy = sinon.spy()
+      expressApp.get '/write_browser', (req, res, next) ->
+        model = req.getModel()
+        store.once 'bundle', (browserify) ->
+          browserify.transform coffeeify
+        store.bundle __dirname + '/client.coffee', {minify: false}, (err, storeBundle) ->
+          expect(err).to.equal null
+          model.bundle (err, modelBundle) ->
+            expect(err).to.equal null
+            res.send """
+              <html>
+                <body>
+                  <div id=hello></div>
+                </body>
+                <script>
+                  #{storeBundle};
+                  var racer = require("racer");
+                  racer.ready(function(model) {
+                    model.add('widgets', {name: 'qbert'}, function (err) {
+                      if (err) throw err;
+                      document.getElementById("hello").innerHTML = 'Hello' + ' World';
+                    });
+                  });
+                  racer.init(#{stringifyData(modelBundle)});
+                </script>
+              </html>
+            """
+
+      store.allow 'all', '**', (docId, relPath, opData, docBeforeChange, session) ->
+        if testIndex is CURR_TEST
+          spy()
+          expect(opData.origin).to.equal 'browser'
+          expect(session).to.not.equal undefined
+        return
+
+      browser = soda.createClient
+        host: 'localhost'
+        port: 4444
+        url: 'http://localhost:8000'
+        browser: 'googlechrome'
+
+      browser
+        .chain
+        .session()
+        .open('/write_browser')
+        .waitForTextPresent('Hello World')
+        .end (err) ->
+          expect(err).to.equal null
+          browser.testComplete ->
+            expect(spy.calledOnce).to.equal true
+            CURR_TEST++
+            done()
+
+stringifyData = (object) ->
+  json = JSON.stringify object, null, 2
+  return json.replace /[&']/g, (match) ->
+    if (match is '&') then '&amp;' else '&#39'
