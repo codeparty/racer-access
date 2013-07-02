@@ -53,13 +53,16 @@ function plugin (racer, options) {
     }
   }
 
-  racer.on('store', function (store) {
+  racer.on('store', setupStore);
+  function setupStore (store) {
+    if (store._didInitAccessControl) return;
     /**
      * Assign the connect session to ShareJS's useragent (there is 1 useragent per
      * browser tab or window that is connected to our server via browserchannel).
      * We'll probably soon move this into racer core, so developers won't need to
      * remember to have this code here.
      */
+    store._didInitAccessControl = true;
     store.shareClient.use('connect', function (shareRequest, next) {
       var req = shareRequest.req;
       if (req && req.session) shareRequest.agent.connectSession = req.session;
@@ -67,9 +70,10 @@ function plugin (racer, options) {
     });
 
     setupPreValidate(store.shareClient);
-  });
+  }
 
   Store.prototype.allow = function (type, pattern, callback) {
+    setupStore(this);
     this['_allow_' + type](pattern, callback);
   };
 
