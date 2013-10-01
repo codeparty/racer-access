@@ -8,10 +8,8 @@
   },
   "devDependencies": {
     "racer": "0.5.x",
-    "livedb": "git://github.com/share/livedb.git",
+    "livedb": "*",
     "redis": "*",
-    "mongoskin": "*",
-    "livedb-mongo": "*",
     "async": "*",
     "mocha": "*",
     "coffee-script": "*",

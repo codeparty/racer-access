@@ -3,24 +3,20 @@ racerAccess = require '../index'
 livedb = require 'livedb'
 express = require 'express'
 racerBrowserChannel = require 'racer-browserchannel'
-mongoskin = require 'mongoskin'
-LiveDbMongo = require 'livedb-mongo'
 http = require 'http'
 racer.use racerAccess
 expressApp = express()
 expect = require 'expect.js'
 sinon = require 'sinon'
-soda = require 'soda'
 coffeeify = require 'coffeeify'
 
-mongo = mongoskin.db('mongodb://localhost:27017/test?auto_reconnect', safe: true)
 redis = require('redis').createClient()
 redis.select 8
 redisObserver = require('redis').createClient()
 redisObserver.select 8
 
 store = racer.createStore
-  backend: livedb.client new LiveDbMongo(mongo), redis, redisObserver
+  backend: livedb.client {db:livedb.memory(), redis:redis, redisObserver:redisObserver}
 
 store.on 'bundle', (browserify) ->
   browserify.require('racer', {expose: 'racer'})
@@ -42,9 +38,7 @@ CURR_TEST = 0
 
 describe 'session access', ->
   before (done) ->
-    mongo.dropDatabase (err) ->
-      return done err if err
-      redis.flushdb done
+    redis.flushdb done
 
   describe 'query access control handlers', ->
     it 'should have access to the session and origin', (done) ->
@@ -166,7 +160,8 @@ describe 'session access', ->
         CURR_TEST++
         done()
 
-    it 'should know whether an op was initiated by the browser', (done) ->
+    # This test requires soda and selenium-rc running on port 4444.
+    it.skip 'should know whether an op was initiated by the browser', (done) ->
       @timeout 10000
       testIndex = CURR_TEST
       spy = sinon.spy()
@@ -204,7 +199,7 @@ describe 'session access', ->
           expect(session).to.not.equal undefined
         return
 
-      browser = soda.createClient
+      browser = require('soda').createClient
         host: 'localhost'
         port: 4444
         url: 'http://localhost:8000'

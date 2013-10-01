@@ -8,8 +8,6 @@ expect = require 'expect.js'
 sinon = require 'sinon'
 racer = require 'racer'
 livedb = require 'livedb'
-{LiveDbMongo} = require 'livedb-mongo'
-mongoskin = require 'mongoskin'
 
 accessPlugin = require '../index'
 racer.use accessPlugin
@@ -138,7 +136,7 @@ shouldAllowAndBlockForAll = ->
     it 'should block non-permissible changes', (done) ->
       widgetId = @model.add 'widgets', {secret: 'not' + SECRET, text: 'abc', admin: true}, (err) =>
         expect(err).to.equal undefined
-        @model.stringInsert "widgets.#{widgetId}.text", 1, 1, (err) =>
+        @model.stringRemove "widgets.#{widgetId}.text", 1, 1, (err) =>
           expect(err).to.equal 'Unauthorized'
           done()
   describe 'caused by removing items from a list', ->
@@ -186,22 +184,22 @@ shouldAllowAndBlockForAll = ->
 
 describe 'access control on the server', ->
   beforeEach (done) ->
-    @mongo = mongoskin.db('mongodb://localhost:27017/test?auto_reconnect', safe: true)
     @redis = require('redis').createClient()
     @redis.select 8
     @redisObserver = require('redis').createClient()
     @redisObserver.select 8
     @store = racer.createStore
-      backend: livedb.client new LiveDbMongo(@mongo), @redis, @redisObserver
+      backend: livedb.client
+        db: livedb.memory()
+        redis: @redis
+        redisObserver: @redisObserver
 
-    @mongo.dropDatabase =>
-      @redis.flushdb =>
-        @model = @store.createModel()
-        done()
+    @redis.flushdb =>
+      @model = @store.createModel()
+      done()
 
   afterEach (done) ->
     async.parallel [
-      (parallelCb) => @mongo.close parallelCb
       (parallelCb) => @redis.quit parallelCb
       (parallelCb) => @redisObserver.quit parallelCb
     ], done
@@ -391,7 +389,7 @@ describe 'access control on the server', ->
         it 'should block non-permissible changes', (done) ->
           widgetId = @model.add 'widgets', {secret: 'not' + SECRET, text: 'abc'}, (err) =>
             expect(err).to.equal undefined
-            @model.stringInsert "widgets.#{widgetId}.text", 1, 1, (err) =>
+            @model.stringRemove "widgets.#{widgetId}.text", 1, 1, (err) =>
               expect(err).to.equal 'Unauthorized'
               done()
 
@@ -637,7 +635,7 @@ describe 'access control on the server', ->
             it 'should block non-permissible changes', (done) ->
               widgetId = @model.add 'widgets', {secret: 'not' + SECRET, text: 'abc'}, (err) =>
                 expect(err).to.equal undefined
-                @model.stringInsert "widgets.#{widgetId}.text", 1, 1, (err) =>
+                @model.stringRemove "widgets.#{widgetId}.text", 1, 1, (err) =>
                   expect(err).to.equal 'Unauthorized'
                   done()
 
@@ -858,7 +856,7 @@ describe 'access control on the server', ->
             expect(howMany).to.equal 1
             expect(docBeforeRemove.list).to.eql ['x', 'y', 'z']
           if spy.callCount is 2
-            expect(index).to.equal 2
+            expect(index).to.equal 1
             expect(howMany).to.equal 1
             expect(docBeforeRemove.list).to.eql ['x', 'z']
           return
