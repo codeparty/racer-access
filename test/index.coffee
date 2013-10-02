@@ -346,14 +346,18 @@ describe 'access control on the server', ->
             expect(err).to.equal undefined
             @model.set "widgets.#{widgetId}.list.0", 'x', (err) =>
               expect(err).to.equal undefined
-              done()
+              @model.set "widgets.#{widgetId}.list.0", '', (err) =>
+                expect(err).to.equal undefined
+                done()
 
         it 'should block non-permissible changes', (done) ->
           widgetId = @model.add 'widgets', {secret: 'not' + SECRET, list: ['a', 'b']}, (err) =>
             expect(err).to.equal undefined
             @model.set "widgets.#{widgetId}.list.0", 'x', (err) =>
               expect(err).to.equal 'Unauthorized'
-              done()
+              @model.set "widgets.#{widgetId}.list.0", '', (err) =>
+                expect(err).to.equal 'Unauthorized'
+                done()
 
       describe 'via stringInsert', ->
         beforeEach ->
@@ -433,18 +437,22 @@ describe 'access control on the server', ->
           return 'Unauthorized' if docBeforeInsert.secret isnt SECRET
 
       it 'should allow permissible changes', (done) ->
-        widgetId = @model.add 'widgets', {secret: SECRET}, (err) =>
+        widgetId = @model.add 'widgets', {secret: SECRET, list:[]}, (err) =>
           expect(err).to.equal undefined
           @model.insert "widgets.#{widgetId}.list", 0, ['a', 'b'], (err) =>
             expect(err).to.equal undefined
-            done()
+            @model.insert "widgets.#{widgetId}.list", 2, [0], (err) =>
+              expect(err).to.equal undefined
+              done()
 
       it 'should block non-permissible changes', (done) ->
-        widgetId = @model.add 'widgets', {secret: 'not' + SECRET}, (err) =>
+        widgetId = @model.add 'widgets', {secret: 'not' + SECRET, list:[]}, (err) =>
           expect(err).to.equal undefined
           @model.insert "widgets.#{widgetId}.list", 0, ['a', 'b'], (err) =>
             expect(err).to.equal 'Unauthorized'
-            done()
+            @model.insert "widgets.#{widgetId}.list", 0, [0], (err) =>
+              expect(err).to.equal 'Unauthorized'
+              done()
 
     describe 'on "move"', ->
       beforeEach ->

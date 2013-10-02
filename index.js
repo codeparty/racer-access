@@ -372,31 +372,31 @@ function opToRacerMethod (op) {
     return 'change';
 
   // list replace
-  } else if (item.li && item.ld) {
+  } else if (item.li !== undefined && item.ld !== undefined) {
     return 'change';
 
   // List insert
-  } else if (item.li) {
+  } else if (item.li !== undefined) {
     return 'insert';
 
   // List remove
-  } else if (item.ld) {
+  } else if (item.ld !== undefined) {
     return 'remove';
 
   // List move
-  } else if (item.lm !== void 0) {
+  } else if (item.lm !== undefined) {
     return 'move';
 
   // String insert
-  } else if (item.si) {
+  } else if (item.si !== undefined) {
     return 'stringInsert';
 
   // String remove
-  } else if (item.sd) {
+  } else if (item.sd !== undefined) {
     return 'stringRemove';
 
   // Increment
-  } else if (item.na !== void 0) {
+  } else if (item.na !== undefined) {
     return 'increment';
   }
 }
