@@ -1,4 +1,1 @@
-racer-access
-============
-
-Access control plugin for racer
+DEPRECATED. DO NOT USE.
