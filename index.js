@@ -423,6 +423,7 @@ function relevantPath (pattern, relativeSegments) {
   if (pattern === '**') return [null].concat(relativeSegments);
   // Check for patterns "collection**" or e.g., "collection.*.x.y.z**"
   if (pattern.slice(pattern.length-2, pattern.length) === '**') {
+    return true;
   } else {
     // Handle e.g., pattern = "collection.*.x.y.z"
     var patternSegments = pattern.split('.');
